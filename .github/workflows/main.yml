@@ -17,12 +17,6 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
-
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       with:
@@ -37,35 +31,36 @@ jobs:
         echo "NDK_HOME=$ANDROID_HOME/ndk/23.2.8568313" >> $GITHUB_ENV
         echo "CMAKE_HOME=$ANDROID_HOME/cmake/4.0.3" >> $GITHUB_ENV
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-
-    - name: Build ShadowHook (Release)
+    - name: Build ShadowHook (Static)
       run: |
-        ./gradlew :shadowhook:assembleRelease \
-          -Pandroid.injected.signing.store.file="" \
-          -Pandroid.injected.signing.store.password="" \
-          -Pandroid.injected.signing.key.alias="" \
-          -Pandroid.injected.signing.key.password=""
+        mkdir -p build_static
+        cd build_static
+        $CMAKE_HOME/bin/cmake \
+          -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-21 \
+          -DSHADOWHOOK_STATIC=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          $GITHUB_WORKSPACE/shadowhook/src/main/cpp
+        $CMAKE_HOME/bin/cmake --build . --target shadowhook -j$(nproc)
       env:
         ANDROID_NDK_HOME: ${{ env.NDK_HOME }}
 
-    - name: Locate built .so files
-      id: find_so
+    - name: Locate built files
+      id: find_files
       run: |
-        echo "Searching for libshadowhook.so..."
-        find . -name "libshadowhook.so" -type f | while read file; do
+        echo "Searching for libshadowhook.a..."
+        find . -name "libshadowhook.a" -type f | while read file; do
           echo "Found: $file"
         done
-        # نسخ الملفات إلى مجلد موحد للرفع
-        mkdir -p artifacts/arm64-v8a artifacts/armeabi-v7a
-        cp shadowhook/build/intermediates/cmake/release/obj/arm64-v8a/libshadowhook.so artifacts/arm64-v8a/ 2>/dev/null || true
-        cp shadowhook/build/intermediates/cmake/release/obj/armeabi-v7a/libshadowhook.so artifacts/armeabi-v7a/ 2>/dev/null || true
+        mkdir -p artifacts/arm64-v8a
+        cp build_static/libshadowhook.a artifacts/arm64-v8a/ 2>/dev/null || true
+        cp shadowhook/src/main/cpp/include/shadowhook.h artifacts/ 2>/dev/null || true
         echo "artifact_path=artifacts" >> $GITHUB_OUTPUT
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: shadowhook-libs
-        path: ${{ steps.find_so.outputs.artifact_path }}
+        path: ${{ steps.find_files.outputs.artifact_path }}
         if-no-files-found: warn
